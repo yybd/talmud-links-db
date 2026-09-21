@@ -116,35 +116,42 @@ jobs:
       - name: PR שממתין לאישור
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.pub.outputs.tag }}
+          FROM: ${{ needs.check.outputs.current }}
+          TO: ${{ needs.check.outputs.upstream }}
+          LINKS: ${{ steps.stats.outputs.links }}
+          DH: ${{ steps.stats.outputs.dh }}
+          GEMARA: ${{ steps.stats.outputs.gemara }}
+          BOOKS: ${{ steps.stats.outputs.books }}
+          SCHEMA: ${{ steps.stats.outputs.schema }}
         run: |
           set -euo pipefail
-          tag="${{ steps.pub.outputs.tag }}"
-          branch="update/otzaria-${{ needs.check.outputs.upstream }}"
+          owner="${GITHUB_REPOSITORY%%/*}"
+          branch="update/otzaria-${TO}"
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "$branch"
           git add manifest/latest.json
-          git commit -m "אוצריא v${{ needs.check.outputs.current }} → v${{ needs.check.outputs.upstream }}"
+          git commit -m "אוצריא v${FROM} → v${TO}"
           git push -u origin "$branch" --force
-          owner="${GITHUB_REPOSITORY%%/*}"
-          gh pr create --title "מסד חדש: אוצריא v${{ needs.check.outputs.upstream }}" \
-            --assignee "$owner" \
-            --body "$(cat <<EOF
-מסד אוצריא עלה מ-**v${{ needs.check.outputs.current }}** ל-**v${{ needs.check.outputs.upstream }}**, והגרף נבנה מחדש.
 
-| | |
-|---|---|
-| קישורים | ${{ steps.stats.outputs.links }} |
-| דיבורי-מתחיל | ${{ steps.stats.outputs.dh }} |
-| שורות גמרא | ${{ steps.stats.outputs.gemara }} |
-| ספרים | ${{ steps.stats.outputs.books }} |
-| סכימה | ${{ steps.stats.outputs.schema }} |
+          # גוף ה-PR נכתב לקובץ ולא ל-heredoc בתוך הפקודה: שורת סיום
+          # heredoc יושבת בעמודה 0, וזה מסיים את בלוק ה-YAML באמצע.
+          {
+            printf 'מסד אוצריא עלה מ-**v%s** ל-**v%s**, והגרף נבנה מחדש.\n\n' "$FROM" "$TO"
+            printf '| | |\n|---|---|\n'
+            printf '| קישורים | %s |\n' "$LINKS"
+            printf '| דיבורי-מתחיל | %s |\n' "$DH"
+            printf '| שורות גמרא | %s |\n' "$GEMARA"
+            printf '| ספרים | %s |\n' "$BOOKS"
+            printf '| סכימה | %s |\n\n' "$SCHEMA"
+            printf 'הריליס `%s` קיים כ-**טיוטה**, ולכן `releases/latest/download` אינו רואה אותו.\n' "$TAG"
+            printf '**מיזוג ה-PR הזה מפרסם אותו**, ומאותו רגע האפליקציות והשרת יציעו את העדכון.\n\n'
+            if [ "$SCHEMA" != "2" ]; then
+              printf '⚠️ הסכימה כאן היא %s ולא 2 — אפליקציות ישנות ידחו את המסד במכוון. ודא שגרסה תואמת שוחררה.\n\n' "$SCHEMA"
+            fi
+            printf '@%s\n' "$owner"
+          } > pr-body.md
 
-הריליס \`$tag\` קיים כ-**טיוטה** ולכן \`releases/latest/download\` אינו רואה אותו.
-**מיזוג ה-PR הזה מפרסם אותו**, ומאותו רגע האפליקציות והשרת יציעו את העדכון.
-
-⚠️ אם הסכימה כאן שונה מ-2 — אפליקציות ישנות ידחו את המסד במכוון. ודא שגרסה תואמת שוחררה.
-
-@$owner
-EOF
-)"
+          gh pr create --title "מסד חדש: אוצריא v${TO}" \
+            --assignee "$owner" --body-file pr-body.md
