@@ -1,0 +1,59 @@
+# מיזוג ה-PR הוא הפרסום.
+#
+# check-upstream יוצר את הריליס כ-**טיוטה**, ולכן
+# `releases/latest/download` — הכתובת שהאפליקציה והשרת מושכים ממנה —
+# אינו רואה אותו. כאן הטיוטה הופכת לפרסומה, ורק אחרי שאדם אישר את
+# המספרים בדיף.
+#
+# הטריגר הוא שינוי ב-manifest/latest.json ב-main, כלומר בדיוק מה
+# שה-PR משנה. התג נלקח מתוך הקובץ עצמו ולא מומצא כאן.
+
+name: publish-on-merge
+
+on:
+  push:
+    branches: [main]
+    paths: ['manifest/latest.json']
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: לפרסם את הטיוטה
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag=$(jq -r '.tag' manifest/latest.json)
+          echo "תג: $tag"
+
+          state=$(gh release view "$tag" --json isDraft --jq '.isDraft' 2>/dev/null || echo missing)
+          if [ "$state" = "missing" ]; then
+            echo "::error::אין ריליס בשם $tag. המניפסט השתנה בלי שנבנתה טיוטה?"
+            exit 1
+          fi
+          if [ "$state" = "false" ]; then
+            echo "$tag כבר מפורסם — אין מה לעשות."
+            exit 0
+          fi
+
+          gh release edit "$tag" --draft=false --latest
+
+          # מה שהאפליקציה תראה בפועל, דרך אותה כתובת בדיוק
+          url=https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/links-manifest.json
+          for i in 1 2 3 4 5; do
+            if curl -sfL "$url" -o live.json; then break; fi
+            echo "  ממתין להתפשטות ($i)…"; sleep 5
+          done
+          live=$(jq -r '.tag' live.json)
+          if [ "$live" != "$tag" ]; then
+            echo "::error::releases/latest מצביע על $live ולא על $tag"
+            exit 1
+          fi
+          echo "✅ $tag פורסם, ו-releases/latest מצביע עליו."
+          jq -r '"   אוצריא v\(.otzariaDbVersion) · \(.size/1048576|floor)MB · sha \(.sha256[0:16])…"' live.json

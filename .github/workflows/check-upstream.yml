@@ -1,0 +1,150 @@
+# בונה גרף חדש כשאוצריא מפרסמת מסד חדש — ועוצר לאישור.
+#
+# **למה PR ולא פרסום אוטומטי.** אוצריא מפרסמת אוטומטית כי זה המוצר
+# שלה; כאן זו נגזרת, ומסד חדש מגיע ללומדים. לכן ה-CI בונה, מודד
+# ומדווח — והפרסום נשאר לחיצה של אדם.
+#
+# המנגנון: הריליס נוצר כ-**טיוטה**, ולכן `releases/latest/download`
+# אינו רואה אותו בכלל. במקביל נפתח PR שמעדכן את manifest/latest.json
+# עם המספרים החדשים. מיזוג ה-PR הוא מה שמפרסם את הטיוטה
+# (publish-on-merge.yml) — כלומר הדיף שאתה מאשר *הוא* האישור.
+#
+# הבדיקה היומית עולה שניות: היא שולפת 80 בייט מאוצריא ומשווה גרסה.
+# רק כשיש חדש היא יורדת ל-1.4GB ובונה, וגם זה כדקה.
+
+name: check-upstream
+
+on:
+  schedule:
+    - cron: '17 4 * * *' # יומי. זול כי רוב הימים נגמרים בהשוואת גרסה.
+  workflow_dispatch:
+    inputs:
+      force:
+        description: לבנות גם אם הגרסה זהה
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      upstream: ${{ steps.cmp.outputs.upstream }}
+      current: ${{ steps.cmp.outputs.current }}
+      changed: ${{ steps.cmp.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: cmp
+        name: מה יש אצל אוצריא מול מה שאצלנו
+        run: |
+          set -euo pipefail
+          url=$(gh api repos/Otzaria/SeforimLibrary/releases/latest \
+                 --jq '.assets[] | select(.name=="library_stats.json") | .browser_download_url')
+          curl -sL -o stats.json "$url"
+          upstream=$(jq -r '.db_version' stats.json)
+          current=$(jq -r '.otzariaDbVersion' manifest/latest.json)
+          echo "אוצריא: $upstream · אצלנו: $current"
+          jq -r '"  \(.books) ספרים · \(.lines) שורות · \(.links) קישורים"' stats.json
+          echo "upstream=$upstream" >> "$GITHUB_OUTPUT"
+          echo "current=$current"   >> "$GITHUB_OUTPUT"
+          if [ "$upstream" != "$current" ] || [ "${{ inputs.force }}" = "true" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "✅ מעודכן — אין מה לבנות."
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    needs: check
+    if: needs.check.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # נמדד על runner אמיתי: 78GB פנויים אחרי פריסת 7.4GB, הורדה 9
+      # שניות ופריסה 18. השיא הנדרש הוא ~9.7GB — מרווח של פי שמונה.
+      - name: מסד אוצריא
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -qq zstd sqlite3
+          cd "$RUNNER_TEMP"
+          curl -sL -o seforim.db.zst \
+            https://github.com/Otzaria/SeforimLibrary/releases/latest/download/seforim.db.zst
+          zstd -d --rm seforim.db.zst -o seforim.db
+          ls -lh seforim.db
+
+      - name: בניית הגרף
+        run: |
+          set -euo pipefail
+          python3 tools/build_links_db.py --src "$RUNNER_TEMP/seforim.db" --out build/links.db
+          rm -f "$RUNNER_TEMP/seforim.db"
+
+      - id: stats
+        name: המספרים שייכנסו ל-PR
+        run: |
+          set -euo pipefail
+          q() { sqlite3 "file:build/links.db?immutable=1" "$1"; }
+          {
+            echo "links=$(q 'SELECT COUNT(*) FROM link;')"
+            echo "dh=$(q 'SELECT COUNT(*) FROM line_dh;')"
+            echo "gemara=$(q 'SELECT COUNT(*) FROM daf_line;')"
+            echo "books=$(q 'SELECT COUNT(*) FROM book;')"
+            echo "schema=$(q \"SELECT value FROM meta WHERE key='schema';\")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: אריזה וטיוטת ריליס
+        id: pub
+        run: |
+          set -euo pipefail
+          tag="v$(date -u +%Y%m%d)-otzaria${{ needs.check.outputs.upstream }}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          python3 tools/publish.py --tag "$tag"          # אורז, לא מעלה
+          gh release create "$tag" --draft \
+            --title "גרף הקישורים — $tag" \
+            --notes "נבנה ממסד אוצריא v${{ needs.check.outputs.upstream }}. טיוטה עד שה-PR ימוזג."
+          gh release upload "$tag" build/dist/links.db.zst build/dist/links-manifest.json --clobber
+          cp build/dist/links-manifest.json manifest/latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: PR שממתין לאישור
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.pub.outputs.tag }}"
+          branch="update/otzaria-${{ needs.check.outputs.upstream }}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add manifest/latest.json
+          git commit -m "אוצריא v${{ needs.check.outputs.current }} → v${{ needs.check.outputs.upstream }}"
+          git push -u origin "$branch" --force
+          owner="${GITHUB_REPOSITORY%%/*}"
+          gh pr create --title "מסד חדש: אוצריא v${{ needs.check.outputs.upstream }}" \
+            --assignee "$owner" \
+            --body "$(cat <<EOF
+מסד אוצריא עלה מ-**v${{ needs.check.outputs.current }}** ל-**v${{ needs.check.outputs.upstream }}**, והגרף נבנה מחדש.
+
+| | |
+|---|---|
+| קישורים | ${{ steps.stats.outputs.links }} |
+| דיבורי-מתחיל | ${{ steps.stats.outputs.dh }} |
+| שורות גמרא | ${{ steps.stats.outputs.gemara }} |
+| ספרים | ${{ steps.stats.outputs.books }} |
+| סכימה | ${{ steps.stats.outputs.schema }} |
+
+הריליס \`$tag\` קיים כ-**טיוטה** ולכן \`releases/latest/download\` אינו רואה אותו.
+**מיזוג ה-PR הזה מפרסם אותו**, ומאותו רגע האפליקציות והשרת יציעו את העדכון.
+
+⚠️ אם הסכימה כאן שונה מ-2 — אפליקציות ישנות ידחו את המסד במכוון. ודא שגרסה תואמת שוחררה.
+
+@$owner
+EOF
+)"
