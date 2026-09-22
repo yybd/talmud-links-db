@@ -1,11 +1,11 @@
 {
   "schema": 2,
   "otzariaDbVersion": "28",
-  "builtAt": "2026-09-22T01:33:31",
-  "tag": "v1-otzaria28",
+  "builtAt": "2026-09-22T00:13:57",
+  "tag": "v20260922-otzaria28",
   "asset": "links.db.zst",
-  "url": "https://github.com/yybd/talmud-links-db/releases/download/v1-otzaria28/links.db.zst",
-  "size": 85915217,
+  "url": "https://github.com/yybd/talmud-links-db/releases/download/v20260922-otzaria28/links.db.zst",
+  "size": 85864791,
   "rawSize": 372142080,
-  "sha256": "264dd00a0c76fe44c06cd545314845df7af50ea97d27844fdc1bad34862e1f65"
+  "sha256": "d1fb0761aed4dccdb235e1c7c61b9d618050c7c6f667e25a6b3617963ee536cf"
 }
