@@ -89,13 +89,13 @@ jobs:
         name: המספרים שייכנסו ל-PR
         run: |
           set -euo pipefail
-          q() { sqlite3 "file:build/links.db?immutable=1" "$1"; }
+          db="file:build/links.db?immutable=1"
           {
-            echo "links=$(q 'SELECT COUNT(*) FROM link;')"
-            echo "dh=$(q 'SELECT COUNT(*) FROM line_dh;')"
-            echo "gemara=$(q 'SELECT COUNT(*) FROM daf_line;')"
-            echo "books=$(q 'SELECT COUNT(*) FROM book;')"
-            echo "schema=$(q \"SELECT value FROM meta WHERE key='schema';\")"
+            echo "links=$(sqlite3 "$db" 'SELECT COUNT(*) FROM link;')"
+            echo "dh=$(sqlite3 "$db" 'SELECT COUNT(*) FROM line_dh;')"
+            echo "gemara=$(sqlite3 "$db" 'SELECT COUNT(*) FROM daf_line;')"
+            echo "books=$(sqlite3 "$db" 'SELECT COUNT(*) FROM book;')"
+            echo "schema=$(sqlite3 "$db" "SELECT value FROM meta WHERE key='schema';")"
           } >> "$GITHUB_OUTPUT"
 
       - name: אריזה וטיוטת ריליס
@@ -151,7 +151,7 @@ jobs:
               printf '⚠️ הסכימה כאן היא %s ולא 2 — אפליקציות ישנות ידחו את המסד במכוון. ודא שגרסה תואמת שוחררה.\n\n' "$SCHEMA"
             fi
             printf '@%s\n' "$owner"
-          } > pr-body.md
+          } > "$RUNNER_TEMP/pr-body.md"
 
           gh pr create --title "מסד חדש: אוצריא v${TO}" \
-            --assignee "$owner" --body-file pr-body.md
+            --assignee "$owner" --body-file "$RUNNER_TEMP/pr-body.md"
