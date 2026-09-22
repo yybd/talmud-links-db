@@ -42,6 +42,15 @@ jobs:
             exit 0
           fi
 
+          # לא לפרסם ריליס ריק: אם הנכסים חסרים, האפליקציה תקבל 404
+          # מכתובת שהמניפסט הבטיח, וזו תקלה שנראית כמו רשת ולא כמו
+          # פרסום שגוי.
+          assets=$(gh release view "$tag" --json assets --jq '[.assets[].name] | join(",")')
+          case "$assets" in
+            *links.db.zst*links-manifest.json*|*links-manifest.json*links.db.zst*) ;;
+            *) echo "::error::$tag חסר נכסים ($assets)"; exit 1 ;;
+          esac
+
           gh release edit "$tag" --draft=false --latest
 
           # מה שהאפליקציה תראה בפועל, דרך אותה כתובת בדיוק

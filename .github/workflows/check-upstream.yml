@@ -105,6 +105,17 @@ jobs:
           tag="v$(date -u +%Y%m%d)-otzaria${{ needs.check.outputs.upstream }}"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           python3 tools/publish.py --tag "$tag"          # אורז, לא מעלה
+
+          # טיוטה קודמת עם אותו תג — משארית של ריצה שנכשלה. **חובה
+          # למחוק**: שתי טיוטות יכולות לחלוק תג, ‏gh פותר אותו
+          # שרירותית, ואז אפשר לפרסם דווקא את זו שאין בה נכסים.
+          gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            --jq ".[] | select(.draft==true and .tag_name==\"$tag\") | .id" \
+          | while read -r id; do
+              echo "  מוחק טיוטה קודמת $id"
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+            done
+
           gh release create "$tag" --draft \
             --title "גרף הקישורים — $tag" \
             --notes "נבנה ממסד אוצריא v${{ needs.check.outputs.upstream }}. טיוטה עד שה-PR ימוזג."
